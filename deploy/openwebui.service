@@ -1,0 +1,18 @@
+[Unit]
+Description=Open WebUI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/personal-site/openwebui
+EnvironmentFile=/opt/personal-site/openwebui/.env
+Environment=HOME=/home/ubuntu
+Environment=PATH=/opt/personal-site/openwebui/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/personal-site/openwebui/venv/bin/open-webui serve --host 127.0.0.1 --port 3000
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+# dependencies and build outputs
+node_modules/
+dist/
+target/
+venv/
+__pycache__/
+*.pyc
+
+# environment and local runtime files
+.env
+.env.bak-*
+*.log
+*.msi
+*.db
+*.sqlite
+*.sqlite3
+
+# editor and OS files
+.DS_Store
+Thumbs.db
