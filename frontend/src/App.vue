@@ -107,6 +107,7 @@ const commentDrafts = reactive<Record<string, string>>({});
 const replyTo = ref<ReplyTarget | null>(null);
 const activeTab = ref<WorkspaceTab>('feed');
 const authMode = ref<AuthMode>('login');
+const authPanelOpen = ref(false);
 const captcha = ref<Captcha | null>(null);
 const errorMessage = ref('');
 const noticeMessage = ref('');
@@ -184,20 +185,31 @@ function scrollToVillage() {
 
 function goToFeed() {
   activeTab.value = 'feed';
-  if (!user.value) {
-    authMode.value = 'login';
-  }
+  authPanelOpen.value = false;
   scrollToVillage();
 }
 
 function goToProfile() {
   if (user.value) {
     activeTab.value = 'profile';
+    authPanelOpen.value = false;
+    scrollToVillage();
   } else {
-    authMode.value = 'register';
-    activeTab.value = 'feed';
+    openAuthPanel('register');
   }
-  scrollToVillage();
+}
+
+function openAuthPanel(mode: AuthMode = 'login') {
+  authMode.value = mode;
+  authPanelOpen.value = true;
+}
+
+function toggleAuthPanel(mode: AuthMode = 'login') {
+  if (authPanelOpen.value && authMode.value === mode) {
+    authPanelOpen.value = false;
+    return;
+  }
+  openAuthPanel(mode);
 }
 
 async function handleLogin() {
@@ -209,7 +221,7 @@ async function handleLogin() {
     user.value = response.user;
     syncProfileForm();
     await refreshFeed();
-    noticeMessage.value = '登录成功';
+    authPanelOpen.value = false;
     scrollToVillage();
   } catch (error) {
     showError(error);
@@ -242,6 +254,7 @@ async function handleRegister() {
     user.value = response.user;
     syncProfileForm();
     await refreshFeed();
+    authPanelOpen.value = false;
     noticeMessage.value = '注册成功，欢迎来到小羊村';
     scrollToVillage();
   } catch (error) {
@@ -264,6 +277,7 @@ function logout() {
   replyTo.value = null;
   activeTab.value = 'feed';
   authMode.value = 'login';
+  authPanelOpen.value = false;
   noticeMessage.value = '已退出登录';
 }
 
@@ -531,34 +545,52 @@ function countReplies(comments: Comment[]): number {
         <span class="brand__mark" aria-hidden="true"></span>
         <span>小羊云朵里的个人空间</span>
       </button>
-      <nav class="nav-links">
-        <button type="button" :class="{ active: activeTab === 'feed' }" @click="goToFeed">动态</button>
-        <button v-if="user" type="button" :class="{ active: activeTab === 'profile' }" @click="goToProfile">资料</button>
-        <button v-if="isAdmin" type="button" :class="{ active: activeTab === 'admin' }" @click="openAdmin">后台</button>
-        <a class="nav-link nav-link--ai" :href="openWebUiUrl" target="_blank" rel="noreferrer">AI</a>
-        <button v-if="user" type="button" @click="logout">退出</button>
-      </nav>
+      <div class="header-actions">
+        <nav class="nav-links">
+          <button type="button" :class="{ active: activeTab === 'feed' }" @click="goToFeed">动态</button>
+          <button v-if="isAdmin" type="button" :class="{ active: activeTab === 'admin' }" @click="openAdmin">后台</button>
+          <a class="nav-link nav-link--ai" :href="openWebUiUrl" target="_blank" rel="noreferrer">AI</a>
+        </nav>
+
+        <div class="account-slot">
+          <button
+            v-if="!user"
+            class="account-button"
+            type="button"
+            :class="{ active: authPanelOpen }"
+            aria-haspopup="dialog"
+            :aria-expanded="authPanelOpen"
+            @click="toggleAuthPanel('login')"
+          >
+            登录
+          </button>
+          <button
+            v-else
+            class="account-avatar-button"
+            type="button"
+            :aria-label="`编辑 ${greetingName} 的个人信息`"
+            @click="goToProfile"
+          >
+            <span class="account-avatar">
+              <img v-if="user.avatarUrl" :src="resolveAssetUrl(user.avatarUrl)" alt="" />
+              <span v-else>{{ avatarText(user) }}</span>
+            </span>
+          </button>
+        </div>
+      </div>
     </header>
 
     <main class="space-page">
       <section class="space-hero" aria-labelledby="hero-title">
-        <div class="hero-sky" aria-hidden="true">
-          <span class="cloud cloud--one"></span>
-          <span class="cloud cloud--two"></span>
-          <span class="mountain mountain--left"></span>
-          <span class="mountain mountain--right"></span>
-          <span class="hill hill--back"></span>
-          <span class="hill hill--front"></span>
-          <span class="tree tree--left"></span>
-          <span class="tree tree--right"></span>
-          <span class="village-house"></span>
+        <div class="hero-background" aria-hidden="true">
+          <img class="hero-background__image" :src="heroImage" alt="" />
         </div>
 
         <div class="space-hero__content">
           <p class="eyebrow">Lazy Sheep Edition</p>
           <h1 id="hero-title">懒羊羊的个人空间</h1>
           <p class="hero-copy">
-            把你的首页做成一座亮亮的草地小村。懒羊羊作为主角站在右侧，左边留出欢迎文案、入口按钮和轻量信息。
+            欢迎来到亮亮的草地小村。这里可以写动态、放照片，也可以随时去 AI 小屋聊聊天。
           </p>
           <div class="hero-actions">
             <button class="button button--primary" type="button" @click="goToFeed">进入牧场</button>
@@ -570,14 +602,6 @@ function countReplies(comments: Comment[]): number {
             <span>{{ user ? `欢迎回来，${greetingName}` : '先登录，再出发' }}</span>
           </div>
         </div>
-
-        <div class="space-hero__visual" aria-label="懒羊羊主视觉">
-          <div class="hero-art">
-            <img class="space-hero__image" :src="heroImage" alt="开心的懒羊羊" />
-            <span class="hero-art__badge">懒羊羊素材替换版</span>
-          </div>
-        </div>
-        <div class="hero-path" aria-hidden="true"></div>
       </section>
 
       <section class="feature-trail" aria-label="村庄入口">
@@ -605,83 +629,6 @@ function countReplies(comments: Comment[]): number {
       </section>
 
       <section id="village-space" class="workspace">
-        <aside v-if="!user" class="auth-panel panel">
-          <div class="panel-ribbon">小屋门牌</div>
-          <div class="panel-heading">
-            <h2>先在村口签到</h2>
-            <p>登录之后，首页会继续延伸到动态流、资料页和管理页。</p>
-          </div>
-
-          <div class="segmented">
-            <button type="button" :class="{ active: authMode === 'login' }" @click="authMode = 'login'">登录</button>
-            <button type="button" :class="{ active: authMode === 'register' }" @click="authMode = 'register'">注册</button>
-          </div>
-
-          <form v-if="authMode === 'login'" class="form-stack" @submit.prevent="handleLogin">
-            <label>
-              <span>账号</span>
-              <input v-model="loginForm.username" autocomplete="username" required />
-            </label>
-            <label>
-              <span>密码</span>
-              <input v-model="loginForm.password" type="password" autocomplete="current-password" required />
-            </label>
-            <button class="button button--primary" type="submit" :disabled="loading">进入小羊村</button>
-          </form>
-
-          <form v-else class="form-stack" @submit.prevent="handleRegister">
-            <label>
-              <span>账号</span>
-              <input v-model="registerForm.username" autocomplete="username" minlength="3" required />
-            </label>
-            <label>
-              <span>密码</span>
-              <input v-model="registerForm.password" type="password" autocomplete="new-password" minlength="6" required />
-            </label>
-            <label>
-              <span>昵称</span>
-              <input v-model="registerForm.nickname" />
-            </label>
-            <label>
-              <span>头像</span>
-              <input type="file" accept="image/*" @change="uploadAvatar" />
-            </label>
-            <div v-if="registerForm.avatarUrl" class="avatar-preview">
-              <img :src="resolveAssetUrl(registerForm.avatarUrl)" alt="注册头像预览" />
-              <span>头像已选择</span>
-            </div>
-            <label>
-              <span>验证码 {{ captcha?.question }}</span>
-              <input v-model="registerForm.captchaAnswer" inputmode="numeric" required />
-            </label>
-            <button class="button button--primary" type="submit" :disabled="loading || uploadBusy">注册并进入</button>
-          </form>
-        </aside>
-
-        <aside v-else class="identity-panel panel">
-          <div class="panel-ribbon">小羊名片</div>
-          <div class="identity-top">
-            <div class="avatar-xl">
-              <img v-if="user.avatarUrl" :src="resolveAssetUrl(user.avatarUrl)" alt="当前头像" />
-              <span v-else>{{ avatarText(user) }}</span>
-            </div>
-            <div>
-              <h2>{{ greetingName }}</h2>
-              <p class="muted">@{{ user.username }} · {{ user.status === 'ACTIVE' ? '正常' : '已封禁' }}</p>
-            </div>
-          </div>
-          <div class="identity-stats">
-            <span>{{ postCount }} 条动态</span>
-            <span>{{ totalLikes }} 次点赞</span>
-            <span>{{ totalComments }} 条评论</span>
-            <span>{{ isAdmin ? '管理员' : '村民' }}</span>
-          </div>
-          <div class="identity-actions">
-            <button type="button" @click="goToFeed">看动态</button>
-            <button type="button" @click="goToProfile">改资料</button>
-          </div>
-        </aside>
-
         <section class="content-panel">
           <div class="notice-stack">
             <div v-if="errorMessage" class="alert alert--error">{{ errorMessage }}</div>
@@ -691,8 +638,8 @@ function countReplies(comments: Comment[]): number {
           <template v-if="!user">
             <section class="welcome-panel panel">
               <div class="panel-ribbon">牧场公告板</div>
-              <h2>首页内容区的样子</h2>
-              <p>保留功能，但视觉上更轻、更明亮，更像草地上的故事页面。</p>
+              <h2>欢迎来到牧场公告板</h2>
+              <p>先逛逛这里，登录后就能发动态、换头像、留下今天的小心情。</p>
               <div class="welcome-grid">
                 <article>
                   <strong>草地动态</strong>
@@ -704,7 +651,7 @@ function countReplies(comments: Comment[]): number {
                 </article>
                 <article>
                   <strong>AI 小屋</strong>
-                  <span>把聊天入口放进站点里，继续保持独立风格。</span>
+                  <span>想聊天的时候，去小屋坐一会儿。</span>
                 </article>
               </div>
             </section>
@@ -779,6 +726,16 @@ function countReplies(comments: Comment[]): number {
           <template v-else-if="activeTab === 'profile'">
             <form class="profile-editor panel" @submit.prevent="saveProfile">
               <div class="panel-ribbon">资料小屋</div>
+              <div class="profile-editor__header">
+                <div class="avatar-xl">
+                  <img v-if="user.avatarUrl" :src="resolveAssetUrl(user.avatarUrl)" alt="当前头像" />
+                  <span v-else>{{ avatarText(user) }}</span>
+                </div>
+                <div class="profile-editor__meta">
+                  <h2>{{ greetingName }}</h2>
+                  <p class="muted">@{{ user.username }} · {{ user.status === 'ACTIVE' ? '正常' : '已封禁' }}</p>
+                </div>
+              </div>
               <label>
                 <span>昵称</span>
                 <input v-model="profileForm.nickname" required />
@@ -791,7 +748,10 @@ function countReplies(comments: Comment[]): number {
                 <img :src="resolveAssetUrl(profileForm.avatarUrl)" alt="头像预览" />
                 <button type="button" @click="profileForm.avatarUrl = ''">清除头像</button>
               </div>
-              <button class="button button--primary" type="submit" :disabled="loading || uploadBusy">保存资料</button>
+              <div class="profile-actions">
+                <button class="button button--primary" type="submit" :disabled="loading || uploadBusy">保存资料</button>
+                <button class="button button--secondary" type="button" @click="logout">退出登录</button>
+              </div>
             </form>
           </template>
 
@@ -859,5 +819,68 @@ function countReplies(comments: Comment[]): number {
         </section>
       </section>
     </main>
+
+    <Teleport to="body">
+      <div v-if="!user && authPanelOpen" class="auth-overlay" @click.self="authPanelOpen = false">
+        <section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+          <div class="auth-modal__header">
+            <div>
+              <p class="auth-modal__eyebrow">小屋门牌</p>
+              <h2 id="auth-modal-title">{{ authMode === 'login' ? '登录' : '注册' }}</h2>
+            </div>
+            <button type="button" class="auth-modal__close" aria-label="关闭登录界面" @click="authPanelOpen = false">
+              ×
+            </button>
+          </div>
+
+          <p class="auth-modal__lead">登录后就能发动态、整理头像和昵称。</p>
+
+          <div class="auth-tabs">
+            <button type="button" :class="{ active: authMode === 'login' }" @click="authMode = 'login'">登录</button>
+            <button type="button" :class="{ active: authMode === 'register' }" @click="authMode = 'register'">注册</button>
+          </div>
+
+          <form v-if="authMode === 'login'" class="auth-form" @submit.prevent="handleLogin">
+            <label>
+              <span>账号</span>
+              <input v-model="loginForm.username" autocomplete="username" required />
+            </label>
+            <label>
+              <span>密码</span>
+              <input v-model="loginForm.password" type="password" autocomplete="current-password" required />
+            </label>
+            <button class="button button--primary" type="submit" :disabled="loading">进入小羊村</button>
+          </form>
+
+          <form v-else class="auth-form" @submit.prevent="handleRegister">
+            <label>
+              <span>账号</span>
+              <input v-model="registerForm.username" autocomplete="username" minlength="3" required />
+            </label>
+            <label>
+              <span>密码</span>
+              <input v-model="registerForm.password" type="password" autocomplete="new-password" minlength="6" required />
+            </label>
+            <label>
+              <span>昵称</span>
+              <input v-model="registerForm.nickname" />
+            </label>
+            <label>
+              <span>头像</span>
+              <input type="file" accept="image/*" @change="uploadAvatar" />
+            </label>
+            <div v-if="registerForm.avatarUrl" class="avatar-preview">
+              <img :src="resolveAssetUrl(registerForm.avatarUrl)" alt="注册头像预览" />
+              <span>头像已选择</span>
+            </div>
+            <label>
+              <span>验证码 {{ captcha?.question }}</span>
+              <input v-model="registerForm.captchaAnswer" inputmode="numeric" required />
+            </label>
+            <button class="button button--primary" type="submit" :disabled="loading || uploadBusy">注册并进入</button>
+          </form>
+        </section>
+      </div>
+    </Teleport>
   </div>
 </template>
