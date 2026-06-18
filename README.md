@@ -22,6 +22,20 @@ npm.cmd run dev
 
 The Vite dev server proxies `/api` and `/uploads` to `http://127.0.0.1:8080`.
 
+## One-Click Local Startup
+
+Double-click `start-dev.cmd`, or run:
+
+```powershell
+.\start-dev.ps1
+```
+
+The script starts the backend with the `local` profile on `127.0.0.1:8080`, starts the Vite frontend on `127.0.0.1:5173`, writes logs to `logs\`, and opens the frontend when it is ready. Use MySQL instead of the local H2 profile with:
+
+```powershell
+.\start-dev.ps1 -BackendProfile mysql
+```
+
 ## Local Backend
 
 Install JDK 17+ and Maven, then configure MySQL:

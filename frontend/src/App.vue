@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, defineComponent, h, onMounted, reactive, ref, type PropType } from 'vue';
-import heroImage from './assets/sleepy-lamb-hero.png';
+import heroImage from './assets/lazy-sheep-happy.jpg';
+import villageGateImage from './assets/village-gate.png';
+import villageHouseImage from './assets/village-house.png';
 import { api, getToken, resolveAssetUrl, setToken, type Captcha, type Comment, type Post, type User } from './lib/api';
 
 type AuthMode = 'login' | 'register';
@@ -49,7 +51,7 @@ const CommentTree = defineComponent({
               h('strong', comment.author.nickname),
               h('span', formatCommentTime(comment.createdAt)),
             ]),
-            h('p', comment.content),
+            h('p', { class: 'comment-text' }, comment.content),
             h('div', { class: 'comment-actions' }, [
               h(
                 'button',
@@ -140,13 +142,17 @@ const postForm = reactive({
 const isAdmin = computed(() => user.value?.role === 'ADMIN');
 const canUseSpace = computed(() => !!user.value && user.value.status !== 'BANNED');
 const greetingName = computed(() => user.value?.nickname || user.value?.username || '访客');
+const postCount = computed(() => posts.value.length);
+const totalLikes = computed(() => posts.value.reduce((sum, post) => sum + post.likeCount, 0));
+const totalComments = computed(() => posts.value.reduce((sum, post) => sum + post.commentCount, 0));
 
 onMounted(async () => {
   try {
     await refreshCaptcha();
-  } catch (error) {
-    showError(error);
+  } catch {
+    captcha.value = null;
   }
+
   if (getToken()) {
     try {
       user.value = await api.me();
@@ -172,6 +178,28 @@ async function refreshCaptcha() {
   registerForm.captchaAnswer = '';
 }
 
+function scrollToVillage() {
+  document.getElementById('village-space')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function goToFeed() {
+  activeTab.value = 'feed';
+  if (!user.value) {
+    authMode.value = 'login';
+  }
+  scrollToVillage();
+}
+
+function goToProfile() {
+  if (user.value) {
+    activeTab.value = 'profile';
+  } else {
+    authMode.value = 'register';
+    activeTab.value = 'feed';
+  }
+  scrollToVillage();
+}
+
 async function handleLogin() {
   clearMessage();
   loading.value = true;
@@ -182,6 +210,7 @@ async function handleLogin() {
     syncProfileForm();
     await refreshFeed();
     noticeMessage.value = '登录成功';
+    scrollToVillage();
   } catch (error) {
     showError(error);
   } finally {
@@ -192,7 +221,12 @@ async function handleLogin() {
 async function handleRegister() {
   clearMessage();
   if (!captcha.value) {
-    await refreshCaptcha();
+    try {
+      await refreshCaptcha();
+    } catch (error) {
+      showError(error);
+      return;
+    }
   }
   loading.value = true;
   try {
@@ -208,7 +242,8 @@ async function handleRegister() {
     user.value = response.user;
     syncProfileForm();
     await refreshFeed();
-    noticeMessage.value = '注册成功，欢迎来到个人空间';
+    noticeMessage.value = '注册成功，欢迎来到小羊村';
+    scrollToVillage();
   } catch (error) {
     showError(error);
     await refreshCaptcha();
@@ -225,7 +260,10 @@ function logout() {
   adminPosts.value = [];
   adminComments.value = [];
   Object.keys(commentsByPost).forEach((key) => delete commentsByPost[Number(key)]);
+  Object.keys(commentDrafts).forEach((key) => delete commentDrafts[key]);
+  replyTo.value = null;
   activeTab.value = 'feed';
+  authMode.value = 'login';
   noticeMessage.value = '已退出登录';
 }
 
@@ -244,7 +282,7 @@ async function refreshFeed() {
 async function publishPost() {
   clearMessage();
   if (!postForm.content.trim() && postForm.imageUrls.length === 0) {
-    errorMessage.value = '写点内容或上传一张图片吧';
+    errorMessage.value = '写点内容或者上传一张图片吧';
     return;
   }
   loading.value = true;
@@ -399,6 +437,7 @@ async function deleteComment(postId: number, comment: Comment) {
 
 async function openAdmin() {
   activeTab.value = 'admin';
+  scrollToVillage();
   await refreshAdmin();
 }
 
@@ -488,29 +527,91 @@ function countReplies(comments: Comment[]): number {
 <template>
   <div class="site-shell">
     <header class="site-header" aria-label="主导航">
-      <button class="brand" type="button" @click="activeTab = 'feed'">
+      <button class="brand" type="button" @click="goToFeed">
         <span class="brand__mark" aria-hidden="true"></span>
-        <span>个人空间</span>
+        <span>小羊云朵里的个人空间</span>
       </button>
       <nav class="nav-links">
-        <button type="button" :class="{ active: activeTab === 'feed' }" @click="activeTab = 'feed'">动态</button>
-        <button v-if="user" type="button" :class="{ active: activeTab === 'profile' }" @click="activeTab = 'profile'">
-          资料
-        </button>
+        <button type="button" :class="{ active: activeTab === 'feed' }" @click="goToFeed">动态</button>
+        <button v-if="user" type="button" :class="{ active: activeTab === 'profile' }" @click="goToProfile">资料</button>
         <button v-if="isAdmin" type="button" :class="{ active: activeTab === 'admin' }" @click="openAdmin">后台</button>
-        <a :href="openWebUiUrl" target="_blank" rel="noreferrer">AI</a>
+        <a class="nav-link nav-link--ai" :href="openWebUiUrl" target="_blank" rel="noreferrer">AI</a>
         <button v-if="user" type="button" @click="logout">退出</button>
       </nav>
     </header>
 
     <main class="space-page">
-      <section class="space-hero">
-        <img class="space-hero__image" :src="heroImage" alt="个人空间背景图" />
-        <div class="space-hero__overlay"></div>
+      <section class="space-hero" aria-labelledby="hero-title">
+        <div class="hero-sky" aria-hidden="true">
+          <span class="cloud cloud--one"></span>
+          <span class="cloud cloud--two"></span>
+          <span class="mountain mountain--left"></span>
+          <span class="mountain mountain--right"></span>
+          <span class="hill hill--back"></span>
+          <span class="hill hill--front"></span>
+          <span class="tree tree--left"></span>
+          <span class="tree tree--right"></span>
+          <span class="village-house"></span>
+        </div>
+
+        <div class="space-hero__content">
+          <p class="eyebrow">Lazy Sheep Edition</p>
+          <h1 id="hero-title">懒羊羊的个人空间</h1>
+          <p class="hero-copy">
+            把你的首页做成一座亮亮的草地小村。懒羊羊作为主角站在右侧，左边留出欢迎文案、入口按钮和轻量信息。
+          </p>
+          <div class="hero-actions">
+            <button class="button button--primary" type="button" @click="goToFeed">进入牧场</button>
+            <a class="button button--secondary" :href="openWebUiUrl" target="_blank" rel="noreferrer">去 AI 小屋</a>
+          </div>
+          <div class="hero-metrics">
+            <span>{{ postCount }} 条动态</span>
+            <span>{{ totalLikes }} 次点赞</span>
+            <span>{{ user ? `欢迎回来，${greetingName}` : '先登录，再出发' }}</span>
+          </div>
+        </div>
+
+        <div class="space-hero__visual" aria-label="懒羊羊主视觉">
+          <div class="hero-art">
+            <img class="space-hero__image" :src="heroImage" alt="开心的懒羊羊" />
+            <span class="hero-art__badge">懒羊羊素材替换版</span>
+          </div>
+        </div>
+        <div class="hero-path" aria-hidden="true"></div>
       </section>
 
-      <section class="workspace">
+      <section class="feature-trail" aria-label="村庄入口">
+        <button class="trail-card trail-card--feed" type="button" @click="goToFeed">
+          <span class="trail-card__icon" aria-hidden="true">
+            <img :src="heroImage" alt="" />
+          </span>
+          <strong>个人动态</strong>
+          <span>像村里公告板一样发帖、留言、贴图。</span>
+        </button>
+        <a class="trail-card trail-card--ai" :href="openWebUiUrl" target="_blank" rel="noreferrer">
+          <span class="trail-card__icon" aria-hidden="true">
+            <img :src="villageHouseImage" alt="" />
+          </span>
+          <strong>AI 小屋</strong>
+          <span>把聊天入口放进一座温暖的小房子里。</span>
+        </a>
+        <button class="trail-card trail-card--profile" type="button" @click="goToProfile">
+          <span class="trail-card__icon" aria-hidden="true">
+            <img :src="villageGateImage" alt="" />
+          </span>
+          <strong>资料设置</strong>
+          <span>{{ user ? '整理你的头像和昵称' : '把头像、昵称和状态做成小羊村门牌。' }}</span>
+        </button>
+      </section>
+
+      <section id="village-space" class="workspace">
         <aside v-if="!user" class="auth-panel panel">
+          <div class="panel-ribbon">小屋门牌</div>
+          <div class="panel-heading">
+            <h2>先在村口签到</h2>
+            <p>登录之后，首页会继续延伸到动态流、资料页和管理页。</p>
+          </div>
+
           <div class="segmented">
             <button type="button" :class="{ active: authMode === 'login' }" @click="authMode = 'login'">登录</button>
             <button type="button" :class="{ active: authMode === 'register' }" @click="authMode = 'register'">注册</button>
@@ -525,7 +626,7 @@ function countReplies(comments: Comment[]): number {
               <span>密码</span>
               <input v-model="loginForm.password" type="password" autocomplete="current-password" required />
             </label>
-            <button class="button button--primary" type="submit" :disabled="loading">登录</button>
+            <button class="button button--primary" type="submit" :disabled="loading">进入小羊村</button>
           </form>
 
           <form v-else class="form-stack" @submit.prevent="handleRegister">
@@ -558,27 +659,61 @@ function countReplies(comments: Comment[]): number {
         </aside>
 
         <aside v-else class="identity-panel panel">
-          <div class="avatar-xl">
-            <img v-if="user.avatarUrl" :src="resolveAssetUrl(user.avatarUrl)" alt="当前头像" />
-            <span v-else>{{ avatarText(user) }}</span>
-          </div>
-          <div>
-            <h2>{{ greetingName }}</h2>
-            <p class="muted">@{{ user.username }} · {{ user.status === 'ACTIVE' ? '正常' : '已封禁' }}</p>
+          <div class="panel-ribbon">小羊名片</div>
+          <div class="identity-top">
+            <div class="avatar-xl">
+              <img v-if="user.avatarUrl" :src="resolveAssetUrl(user.avatarUrl)" alt="当前头像" />
+              <span v-else>{{ avatarText(user) }}</span>
+            </div>
+            <div>
+              <h2>{{ greetingName }}</h2>
+              <p class="muted">@{{ user.username }} · {{ user.status === 'ACTIVE' ? '正常' : '已封禁' }}</p>
+            </div>
           </div>
           <div class="identity-stats">
-            <span>{{ posts.length }} 动态</span>
-            <span>{{ posts.reduce((sum, post) => sum + post.likeCount, 0) }} 点赞</span>
+            <span>{{ postCount }} 条动态</span>
+            <span>{{ totalLikes }} 次点赞</span>
+            <span>{{ totalComments }} 条评论</span>
+            <span>{{ isAdmin ? '管理员' : '村民' }}</span>
+          </div>
+          <div class="identity-actions">
+            <button type="button" @click="goToFeed">看动态</button>
+            <button type="button" @click="goToProfile">改资料</button>
           </div>
         </aside>
 
         <section class="content-panel">
-          <div v-if="errorMessage" class="alert alert--error">{{ errorMessage }}</div>
-          <div v-if="noticeMessage" class="alert alert--success">{{ noticeMessage }}</div>
+          <div class="notice-stack">
+            <div v-if="errorMessage" class="alert alert--error">{{ errorMessage }}</div>
+            <div v-if="noticeMessage" class="alert alert--success">{{ noticeMessage }}</div>
+          </div>
 
-          <template v-if="user && activeTab === 'feed'">
+          <template v-if="!user">
+            <section class="welcome-panel panel">
+              <div class="panel-ribbon">牧场公告板</div>
+              <h2>首页内容区的样子</h2>
+              <p>保留功能，但视觉上更轻、更明亮，更像草地上的故事页面。</p>
+              <div class="welcome-grid">
+                <article>
+                  <strong>草地动态</strong>
+                  <span>像村里公告板一样发帖、留言和贴图。</span>
+                </article>
+                <article>
+                  <strong>小羊名片</strong>
+                  <span>登录后把头像、昵称和状态整理成一张卡片。</span>
+                </article>
+                <article>
+                  <strong>AI 小屋</strong>
+                  <span>把聊天入口放进站点里，继续保持独立风格。</span>
+                </article>
+              </div>
+            </section>
+          </template>
+
+          <template v-else-if="activeTab === 'feed'">
             <form class="composer panel" @submit.prevent="publishPost">
-              <textarea v-model="postForm.content" rows="4" placeholder="分享今天的新鲜事"></textarea>
+              <div class="panel-ribbon">牧场公告板</div>
+              <textarea v-model="postForm.content" rows="4" placeholder="今天在草地上发生了什么？"></textarea>
               <div v-if="postForm.imageUrls.length" class="image-preview-grid">
                 <figure v-for="image in postForm.imageUrls" :key="image">
                   <img :src="resolveAssetUrl(image)" alt="动态图片预览" />
@@ -602,7 +737,7 @@ function countReplies(comments: Comment[]): number {
                   <img v-if="post.author.avatarUrl" :src="resolveAssetUrl(post.author.avatarUrl)" alt="动态作者头像" />
                   <span v-else>{{ avatarText(post.author) }}</span>
                 </div>
-                <div>
+                <div class="post-header__meta">
                   <strong>{{ post.author.nickname }}</strong>
                   <p>@{{ post.author.username }} · {{ formatTime(post.createdAt) }}</p>
                 </div>
@@ -643,6 +778,7 @@ function countReplies(comments: Comment[]): number {
 
           <template v-else-if="activeTab === 'profile'">
             <form class="profile-editor panel" @submit.prevent="saveProfile">
+              <div class="panel-ribbon">资料小屋</div>
               <label>
                 <span>昵称</span>
                 <input v-model="profileForm.nickname" required />
@@ -661,6 +797,7 @@ function countReplies(comments: Comment[]): number {
 
           <template v-else-if="activeTab === 'admin' && isAdmin">
             <div class="admin-panel panel">
+              <div class="panel-ribbon">村务板</div>
               <div class="table-list">
                 <div v-for="target in adminUsers" :key="target.id" class="table-row">
                   <div>
@@ -684,6 +821,7 @@ function countReplies(comments: Comment[]): number {
             </div>
 
             <div class="admin-panel panel">
+              <div class="panel-ribbon">动态板</div>
               <div class="table-list">
                 <div v-for="post in adminPosts" :key="post.id" class="table-row">
                   <div>
@@ -699,6 +837,7 @@ function countReplies(comments: Comment[]): number {
             </div>
 
             <div class="admin-panel panel">
+              <div class="panel-ribbon">评论板</div>
               <div class="table-list">
                 <div v-for="comment in adminComments" :key="comment.id" class="table-row">
                   <div>

@@ -1,5 +1,6 @@
 .tools/
 logs/
+preview/
 *.log
 
 node_modules/
