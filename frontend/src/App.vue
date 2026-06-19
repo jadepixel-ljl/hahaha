@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, defineComponent, h, onMounted, reactive, ref, type PropType } from 'vue';
+import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type PropType } from 'vue';
 import heroImage from './assets/lazy-sheep-happy.jpg';
 import villageGateImage from './assets/village-gate.png';
 import villageHouseImage from './assets/village-house.png';
 import { api, getToken, resolveAssetUrl, setToken, type Captcha, type Comment, type Post, type User } from './lib/api';
 
 type AuthMode = 'login' | 'register';
+type Page = 'home' | 'feed';
 type WorkspaceTab = 'feed' | 'profile' | 'admin';
 type ReplyTarget = { postId: number; commentId: number; nickname: string };
 
@@ -116,6 +117,13 @@ const uploadBusy = ref(false);
 const adminUsers = ref<User[]>([]);
 const adminPosts = ref<Post[]>([]);
 const adminComments = ref<Comment[]>([]);
+const routePage = ref<Page>(pageFromPath(window.location.pathname));
+const homePage = ref<HTMLElement | null>(null);
+const feedPage = ref<HTMLElement | null>(null);
+const pageStackHeight = ref(window.innerHeight);
+const routeTransitioning = ref(false);
+let pageResizeObserver: ResizeObserver | null = null;
+let pageTransitionTimer: number | null = null;
 
 const loginForm = reactive({
   username: '',
@@ -146,8 +154,20 @@ const greetingName = computed(() => user.value?.nickname || user.value?.username
 const postCount = computed(() => posts.value.length);
 const totalLikes = computed(() => posts.value.reduce((sum, post) => sum + post.likeCount, 0));
 const totalComments = computed(() => posts.value.reduce((sum, post) => sum + post.commentCount, 0));
+const activePageElement = computed(() => (routePage.value === 'home' ? homePage.value : feedPage.value));
+
+watch(routePage, async () => {
+  await nextTick();
+  observeActivePage();
+});
 
 onMounted(async () => {
+  syncRouteFromLocation();
+  window.addEventListener('popstate', syncRouteFromLocation);
+  window.addEventListener('resize', updatePageStackHeight);
+  await nextTick();
+  observeActivePage();
+
   try {
     await refreshCaptcha();
   } catch {
@@ -165,6 +185,70 @@ onMounted(async () => {
   }
 });
 
+onBeforeUnmount(() => {
+  window.removeEventListener('popstate', syncRouteFromLocation);
+  window.removeEventListener('resize', updatePageStackHeight);
+  pageResizeObserver?.disconnect();
+  if (pageTransitionTimer !== null) {
+    window.clearTimeout(pageTransitionTimer);
+  }
+});
+
+function pageFromPath(pathname: string): Page {
+  return pathname === '/feed' ? 'feed' : 'home';
+}
+
+function syncRouteFromLocation() {
+  const nextPage = pageFromPath(window.location.pathname);
+  if (nextPage !== routePage.value) {
+    startPageTransition();
+  }
+  routePage.value = nextPage;
+}
+
+function navigateTo(page: Page) {
+  const targetPath = page === 'feed' ? '/feed' : '/';
+  const pageChanged = routePage.value !== page;
+  window.scrollTo({ top: 0, behavior: 'auto' });
+  if (pageChanged) {
+    startPageTransition();
+  }
+  routePage.value = page;
+  if (window.location.pathname !== targetPath) {
+    window.history.pushState({}, '', targetPath);
+  }
+}
+
+function startPageTransition() {
+  if (pageTransitionTimer !== null) {
+    window.clearTimeout(pageTransitionTimer);
+    pageTransitionTimer = null;
+  }
+  routeTransitioning.value = false;
+  window.requestAnimationFrame(() => {
+    routeTransitioning.value = true;
+    pageTransitionTimer = window.setTimeout(() => {
+      routeTransitioning.value = false;
+      pageTransitionTimer = null;
+    }, 240);
+  });
+}
+
+function updatePageStackHeight() {
+  const element = activePageElement.value;
+  pageStackHeight.value = Math.max(element?.scrollHeight || 0, window.innerHeight);
+}
+
+function observeActivePage() {
+  pageResizeObserver?.disconnect();
+  const element = activePageElement.value;
+  if (element) {
+    pageResizeObserver = new ResizeObserver(updatePageStackHeight);
+    pageResizeObserver.observe(element);
+  }
+  updatePageStackHeight();
+}
+
 function clearMessage() {
   errorMessage.value = '';
   noticeMessage.value = '';
@@ -179,21 +263,23 @@ async function refreshCaptcha() {
   registerForm.captchaAnswer = '';
 }
 
-function scrollToVillage() {
-  document.getElementById('village-space')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+function goHome() {
+  activeTab.value = 'feed';
+  authPanelOpen.value = false;
+  navigateTo('home');
 }
 
 function goToFeed() {
   activeTab.value = 'feed';
   authPanelOpen.value = false;
-  scrollToVillage();
+  navigateTo('feed');
 }
 
 function goToProfile() {
   if (user.value) {
     activeTab.value = 'profile';
     authPanelOpen.value = false;
-    scrollToVillage();
+    navigateTo('feed');
   } else {
     openAuthPanel('register');
   }
@@ -221,8 +307,7 @@ async function handleLogin() {
     user.value = response.user;
     syncProfileForm();
     await refreshFeed();
-    authPanelOpen.value = false;
-    scrollToVillage();
+    goToFeed();
   } catch (error) {
     showError(error);
   } finally {
@@ -256,7 +341,7 @@ async function handleRegister() {
     await refreshFeed();
     authPanelOpen.value = false;
     noticeMessage.value = '注册成功，欢迎来到小羊村';
-    scrollToVillage();
+    goToFeed();
   } catch (error) {
     showError(error);
     await refreshCaptcha();
@@ -451,7 +536,7 @@ async function deleteComment(postId: number, comment: Comment) {
 
 async function openAdmin() {
   activeTab.value = 'admin';
-  scrollToVillage();
+  navigateTo('feed');
   await refreshAdmin();
 }
 
@@ -540,15 +625,20 @@ function countReplies(comments: Comment[]): number {
 
 <template>
   <div class="site-shell">
+    <div class="site-backdrop" :class="{ 'is-home': routePage === 'home' }" aria-hidden="true">
+      <img class="site-backdrop__image" :class="{ 'is-visible': routePage === 'home' }" :src="heroImage" alt="" />
+    </div>
+    <div v-if="routeTransitioning" class="page-transition-cover" aria-hidden="true"></div>
+
     <header class="site-header" aria-label="主导航">
-      <button class="brand" type="button" @click="goToFeed">
+      <button class="brand" type="button" @click="goHome">
         <span class="brand__mark" aria-hidden="true"></span>
         <span>小羊云朵里的个人空间</span>
       </button>
       <div class="header-actions">
         <nav class="nav-links">
-          <button type="button" :class="{ active: activeTab === 'feed' }" @click="goToFeed">动态</button>
-          <button v-if="isAdmin" type="button" :class="{ active: activeTab === 'admin' }" @click="openAdmin">后台</button>
+          <button type="button" :class="{ active: routePage === 'feed' && activeTab === 'feed' }" @click="goToFeed">动态</button>
+          <button v-if="isAdmin" type="button" :class="{ active: routePage === 'feed' && activeTab === 'admin' }" @click="openAdmin">后台</button>
           <a class="nav-link nav-link--ai" :href="openWebUiUrl" target="_blank" rel="noreferrer">AI</a>
         </nav>
 
@@ -580,12 +670,15 @@ function countReplies(comments: Comment[]): number {
       </div>
     </header>
 
-    <main class="space-page">
+    <div class="page-stack" :style="{ minHeight: `${pageStackHeight}px` }">
+    <main
+      ref="homePage"
+      class="space-page page-layer"
+      :class="{ 'is-active': routePage === 'home' }"
+      :aria-hidden="routePage !== 'home'"
+      :inert="routePage !== 'home'"
+    >
       <section class="space-hero" aria-labelledby="hero-title">
-        <div class="hero-background" aria-hidden="true">
-          <img class="hero-background__image" :src="heroImage" alt="" />
-        </div>
-
         <div class="space-hero__content">
           <p class="eyebrow">Lazy Sheep Edition</p>
           <h1 id="hero-title">懒羊羊的个人空间</h1>
@@ -627,7 +720,15 @@ function countReplies(comments: Comment[]): number {
           <span>{{ user ? '整理你的头像和昵称' : '把头像、昵称和状态做成小羊村门牌。' }}</span>
         </button>
       </section>
+    </main>
 
+    <main
+      ref="feedPage"
+      class="space-page space-page--workspace page-layer"
+      :class="{ 'is-active': routePage === 'feed' }"
+      :aria-hidden="routePage !== 'feed'"
+      :inert="routePage !== 'feed'"
+    >
       <section id="village-space" class="workspace">
         <section class="content-panel">
           <div class="notice-stack">
@@ -635,7 +736,8 @@ function countReplies(comments: Comment[]): number {
             <div v-if="noticeMessage" class="alert alert--success">{{ noticeMessage }}</div>
           </div>
 
-          <template v-if="!user">
+          <Transition name="workspace-fade" mode="out-in">
+          <section v-if="!user" key="guest" class="workspace-view">
             <section class="welcome-panel panel">
               <div class="panel-ribbon">牧场公告板</div>
               <h2>欢迎来到牧场公告板</h2>
@@ -655,9 +757,9 @@ function countReplies(comments: Comment[]): number {
                 </article>
               </div>
             </section>
-          </template>
+          </section>
 
-          <template v-else-if="activeTab === 'feed'">
+          <section v-else-if="activeTab === 'feed'" key="feed" class="workspace-view">
             <form class="composer panel" @submit.prevent="publishPost">
               <div class="panel-ribbon">牧场公告板</div>
               <textarea v-model="postForm.content" rows="4" placeholder="今天在草地上发生了什么？"></textarea>
@@ -721,9 +823,9 @@ function countReplies(comments: Comment[]): number {
                 </template>
               </section>
             </article>
-          </template>
+          </section>
 
-          <template v-else-if="activeTab === 'profile'">
+          <section v-else-if="activeTab === 'profile'" key="profile" class="workspace-view">
             <form class="profile-editor panel" @submit.prevent="saveProfile">
               <div class="panel-ribbon">资料小屋</div>
               <div class="profile-editor__header">
@@ -753,9 +855,9 @@ function countReplies(comments: Comment[]): number {
                 <button class="button button--secondary" type="button" @click="logout">退出登录</button>
               </div>
             </form>
-          </template>
+          </section>
 
-          <template v-else-if="activeTab === 'admin' && isAdmin">
+          <section v-else-if="activeTab === 'admin' && isAdmin" key="admin" class="workspace-view">
             <div class="admin-panel panel">
               <div class="panel-ribbon">村务板</div>
               <div class="table-list">
@@ -815,10 +917,12 @@ function countReplies(comments: Comment[]): number {
                 </div>
               </div>
             </div>
-          </template>
+          </section>
+          </Transition>
         </section>
       </section>
     </main>
+    </div>
 
     <Teleport to="body">
       <div v-if="!user && authPanelOpen" class="auth-overlay" @click.self="authPanelOpen = false">
