@@ -7,7 +7,8 @@ import { api, getToken, resolveAssetUrl, setToken, type Captcha, type Comment, t
 
 type AuthMode = 'login' | 'register';
 type Page = 'home' | 'feed';
-type WorkspaceTab = 'feed' | 'profile' | 'admin';
+type WorkspaceTab = 'feed' | 'admin';
+type ToastKind = 'success' | 'error';
 type ReplyTarget = { postId: number; commentId: number; nickname: string };
 
 const CommentTree = defineComponent({
@@ -109,7 +110,11 @@ const replyTo = ref<ReplyTarget | null>(null);
 const activeTab = ref<WorkspaceTab>('feed');
 const authMode = ref<AuthMode>('login');
 const authPanelOpen = ref(false);
+const profilePanelOpen = ref(false);
+const profileAvatarInput = ref<HTMLInputElement | null>(null);
 const captcha = ref<Captcha | null>(null);
+const toastMessage = ref('');
+const toastKind = ref<ToastKind>('success');
 const errorMessage = ref('');
 const noticeMessage = ref('');
 const loading = ref(false);
@@ -124,6 +129,7 @@ const pageStackHeight = ref(window.innerHeight);
 const routeTransitioning = ref(false);
 let pageResizeObserver: ResizeObserver | null = null;
 let pageTransitionTimer: number | null = null;
+let toastTimer: number | null = null;
 
 const loginForm = reactive({
   username: '',
@@ -157,12 +163,14 @@ const totalComments = computed(() => posts.value.reduce((sum, post) => sum + pos
 const activePageElement = computed(() => (routePage.value === 'home' ? homePage.value : feedPage.value));
 
 watch(routePage, async () => {
+  syncDocumentScrollMode();
   await nextTick();
   observeActivePage();
 });
 
 onMounted(async () => {
   syncRouteFromLocation();
+  syncDocumentScrollMode();
   window.addEventListener('popstate', syncRouteFromLocation);
   window.addEventListener('resize', updatePageStackHeight);
   await nextTick();
@@ -189,8 +197,13 @@ onBeforeUnmount(() => {
   window.removeEventListener('popstate', syncRouteFromLocation);
   window.removeEventListener('resize', updatePageStackHeight);
   pageResizeObserver?.disconnect();
+  document.documentElement.classList.remove('home-page-fixed');
+  document.body.classList.remove('home-page-fixed');
   if (pageTransitionTimer !== null) {
     window.clearTimeout(pageTransitionTimer);
+  }
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer);
   }
 });
 
@@ -235,8 +248,13 @@ function startPageTransition() {
 }
 
 function updatePageStackHeight() {
-  const element = activePageElement.value;
-  pageStackHeight.value = Math.max(element?.scrollHeight || 0, window.innerHeight);
+  pageStackHeight.value = window.innerHeight;
+}
+
+function syncDocumentScrollMode() {
+  const fixed = routePage.value === 'home';
+  document.documentElement.classList.toggle('home-page-fixed', fixed);
+  document.body.classList.toggle('home-page-fixed', fixed);
 }
 
 function observeActivePage() {
@@ -258,6 +276,18 @@ function showError(error: unknown) {
   errorMessage.value = error instanceof Error ? error.message : '操作失败，请稍后再试';
 }
 
+function showToast(message: string, kind: ToastKind = 'success') {
+  toastKind.value = kind;
+  toastMessage.value = message;
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer);
+  }
+  toastTimer = window.setTimeout(() => {
+    toastMessage.value = '';
+    toastTimer = null;
+  }, 2600);
+}
+
 async function refreshCaptcha() {
   captcha.value = await api.captcha();
   registerForm.captchaAnswer = '';
@@ -266,27 +296,37 @@ async function refreshCaptcha() {
 function goHome() {
   activeTab.value = 'feed';
   authPanelOpen.value = false;
+  profilePanelOpen.value = false;
   navigateTo('home');
 }
 
 function goToFeed() {
   activeTab.value = 'feed';
   authPanelOpen.value = false;
+  profilePanelOpen.value = false;
   navigateTo('feed');
 }
 
-function goToProfile() {
+function openProfilePanel() {
   if (user.value) {
-    activeTab.value = 'profile';
+    syncProfileForm();
+    profilePanelOpen.value = true;
     authPanelOpen.value = false;
-    navigateTo('feed');
   } else {
-    openAuthPanel('register');
+    openAuthPanel('login');
+  }
+}
+
+function closeProfilePanel() {
+  profilePanelOpen.value = false;
+  if (profileAvatarInput.value) {
+    profileAvatarInput.value.value = '';
   }
 }
 
 function openAuthPanel(mode: AuthMode = 'login') {
   authMode.value = mode;
+  profilePanelOpen.value = false;
   authPanelOpen.value = true;
 }
 
@@ -307,9 +347,11 @@ async function handleLogin() {
     user.value = response.user;
     syncProfileForm();
     await refreshFeed();
+    showToast('登录成功', 'success');
     goToFeed();
   } catch (error) {
     showError(error);
+    showToast(error instanceof Error ? error.message : '登录失败，请稍后再试', 'error');
   } finally {
     loading.value = false;
   }
@@ -340,6 +382,7 @@ async function handleRegister() {
     syncProfileForm();
     await refreshFeed();
     authPanelOpen.value = false;
+    profilePanelOpen.value = false;
     noticeMessage.value = '注册成功，欢迎来到小羊村';
     goToFeed();
   } catch (error) {
@@ -363,6 +406,7 @@ function logout() {
   activeTab.value = 'feed';
   authMode.value = 'login';
   authPanelOpen.value = false;
+  profilePanelOpen.value = false;
   noticeMessage.value = '已退出登录';
 }
 
@@ -453,6 +497,7 @@ async function saveProfile() {
     });
     syncProfileForm();
     await refreshFeed();
+    profilePanelOpen.value = false;
     noticeMessage.value = '资料已更新';
   } catch (error) {
     showError(error);
@@ -536,6 +581,7 @@ async function deleteComment(postId: number, comment: Comment) {
 
 async function openAdmin() {
   activeTab.value = 'admin';
+  profilePanelOpen.value = false;
   navigateTo('feed');
   await refreshAdmin();
 }
@@ -659,7 +705,9 @@ function countReplies(comments: Comment[]): number {
             class="account-avatar-button"
             type="button"
             :aria-label="`编辑 ${greetingName} 的个人信息`"
-            @click="goToProfile"
+            aria-haspopup="dialog"
+            :aria-expanded="profilePanelOpen"
+            @click="openProfilePanel"
           >
             <span class="account-avatar">
               <img v-if="user.avatarUrl" :src="resolveAssetUrl(user.avatarUrl)" alt="" />
@@ -673,7 +721,7 @@ function countReplies(comments: Comment[]): number {
     <div class="page-stack" :style="{ minHeight: `${pageStackHeight}px` }">
     <main
       ref="homePage"
-      class="space-page page-layer"
+      class="space-page space-page--home page-layer"
       :class="{ 'is-active': routePage === 'home' }"
       :aria-hidden="routePage !== 'home'"
       :inert="routePage !== 'home'"
@@ -697,29 +745,6 @@ function countReplies(comments: Comment[]): number {
         </div>
       </section>
 
-      <section class="feature-trail" aria-label="村庄入口">
-        <button class="trail-card trail-card--feed" type="button" @click="goToFeed">
-          <span class="trail-card__icon" aria-hidden="true">
-            <img :src="heroImage" alt="" />
-          </span>
-          <strong>个人动态</strong>
-          <span>像村里公告板一样发帖、留言、贴图。</span>
-        </button>
-        <a class="trail-card trail-card--ai" :href="openWebUiUrl" target="_blank" rel="noreferrer">
-          <span class="trail-card__icon" aria-hidden="true">
-            <img :src="villageHouseImage" alt="" />
-          </span>
-          <strong>AI 小屋</strong>
-          <span>把聊天入口放进一座温暖的小房子里。</span>
-        </a>
-        <button class="trail-card trail-card--profile" type="button" @click="goToProfile">
-          <span class="trail-card__icon" aria-hidden="true">
-            <img :src="villageGateImage" alt="" />
-          </span>
-          <strong>资料设置</strong>
-          <span>{{ user ? '整理你的头像和昵称' : '把头像、昵称和状态做成小羊村门牌。' }}</span>
-        </button>
-      </section>
     </main>
 
     <main
@@ -825,38 +850,6 @@ function countReplies(comments: Comment[]): number {
             </article>
           </section>
 
-          <section v-else-if="activeTab === 'profile'" key="profile" class="workspace-view">
-            <form class="profile-editor panel" @submit.prevent="saveProfile">
-              <div class="panel-ribbon">资料小屋</div>
-              <div class="profile-editor__header">
-                <div class="avatar-xl">
-                  <img v-if="user.avatarUrl" :src="resolveAssetUrl(user.avatarUrl)" alt="当前头像" />
-                  <span v-else>{{ avatarText(user) }}</span>
-                </div>
-                <div class="profile-editor__meta">
-                  <h2>{{ greetingName }}</h2>
-                  <p class="muted">@{{ user.username }} · {{ user.status === 'ACTIVE' ? '正常' : '已封禁' }}</p>
-                </div>
-              </div>
-              <label>
-                <span>昵称</span>
-                <input v-model="profileForm.nickname" required />
-              </label>
-              <label>
-                <span>头像</span>
-                <input type="file" accept="image/*" @change="uploadAvatar" />
-              </label>
-              <div v-if="profileForm.avatarUrl" class="avatar-preview">
-                <img :src="resolveAssetUrl(profileForm.avatarUrl)" alt="头像预览" />
-                <button type="button" @click="profileForm.avatarUrl = ''">清除头像</button>
-              </div>
-              <div class="profile-actions">
-                <button class="button button--primary" type="submit" :disabled="loading || uploadBusy">保存资料</button>
-                <button class="button button--secondary" type="button" @click="logout">退出登录</button>
-              </div>
-            </form>
-          </section>
-
           <section v-else-if="activeTab === 'admin' && isAdmin" key="admin" class="workspace-view">
             <div class="admin-panel panel">
               <div class="panel-ribbon">村务板</div>
@@ -925,6 +918,63 @@ function countReplies(comments: Comment[]): number {
     </div>
 
     <Teleport to="body">
+      <Transition name="toast-pop">
+        <div v-if="toastMessage" class="toast-bubble" :class="`is-${toastKind}`" role="status" aria-live="polite">
+          {{ toastMessage }}
+        </div>
+      </Transition>
+
+      <Transition name="profile-fade">
+        <div v-if="user && profilePanelOpen" class="auth-overlay" @click.self="closeProfilePanel">
+          <form class="auth-modal profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-modal-title" @submit.prevent="saveProfile">
+          <div class="auth-modal__header">
+            <div>
+              <p class="auth-modal__eyebrow">资料编辑</p>
+              <h2 id="profile-modal-title">{{ greetingName }}</h2>
+            </div>
+            <button type="button" class="auth-modal__close" aria-label="关闭资料编辑" @click="closeProfilePanel">
+              ×
+            </button>
+          </div>
+
+          <p class="auth-modal__lead">@{{ user.username }} · {{ user.status === 'ACTIVE' ? '正常' : '已封禁' }}</p>
+
+          <div class="profile-editor__header">
+            <button
+              type="button"
+              class="avatar-xl avatar-xl--clickable"
+              :disabled="uploadBusy"
+              @click="profileAvatarInput?.click()"
+            >
+              <img v-if="user.avatarUrl" :src="resolveAssetUrl(user.avatarUrl)" alt="当前头像" />
+              <span v-else>{{ avatarText(user) }}</span>
+            </button>
+            <div class="profile-editor__meta">
+              <h3>当前资料</h3>
+              <p class="muted">点击头像更换图片，修改昵称后保存即可生效。</p>
+            </div>
+          </div>
+
+          <label>
+            <span>昵称</span>
+            <input v-model="profileForm.nickname" required />
+          </label>
+          <label>
+            <span>头像文件</span>
+            <input ref="profileAvatarInput" type="file" accept="image/*" class="sr-only" @change="uploadAvatar" />
+          </label>
+          <div v-if="profileForm.avatarUrl" class="avatar-preview">
+            <img :src="resolveAssetUrl(profileForm.avatarUrl)" alt="头像预览" />
+            <button type="button" @click="profileForm.avatarUrl = ''">清除头像</button>
+          </div>
+          <div class="profile-actions">
+            <button class="button button--primary" type="submit" :disabled="loading || uploadBusy">保存资料</button>
+            <button class="button button--secondary" type="button" @click="logout">退出登录</button>
+          </div>
+          </form>
+        </div>
+      </Transition>
+
       <div v-if="!user && authPanelOpen" class="auth-overlay" @click.self="authPanelOpen = false">
         <section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
           <div class="auth-modal__header">
